@@ -159,10 +159,37 @@
         function addLog(message, type = 'info') {
             const time = new Date().toLocaleTimeString('en-US', { hour12: false });
             const div = document.createElement('div');
-            let color = type === 'alert' ? 'text-red-400 font-bold bg-red-950/30 p-2 rounded border border-red-900/50' : 'text-slate-300';
-            let prefix = type === 'alert' ? '[GEMMA INSIGHT]' : '[INFO]';
-            
-            div.innerHTML = `<span class="text-slate-600 mr-2">${time}</span> <span class="${color}">${prefix} ${message}</span>`;
+            const styles = {
+                info: {
+                    prefix: '[INFO]',
+                    className: 'text-slate-300'
+                },
+                alert: {
+                    prefix: '[GEMMA INSIGHT]',
+                    className: 'text-red-400 font-bold bg-red-950/30 p-2 rounded border border-red-900/50'
+                },
+                warning: {
+                    prefix: '[AI UNAVAILABLE]',
+                    className: 'text-amber-300 bg-amber-950/30 p-2 rounded border border-amber-900/50'
+                },
+                error: {
+                    prefix: '[AI ERROR]',
+                    className: 'text-red-300 font-semibold bg-red-950/30 p-2 rounded border border-red-900/50'
+                }
+            };
+            const style = styles[type] || styles.info;
+            const timeLabel = document.createElement('span');
+            timeLabel.className = 'text-slate-600 mr-2';
+            timeLabel.textContent = time;
+
+            const messageLabel = document.createElement('span');
+            messageLabel.className = style.className;
+            // AI output is untrusted text. Never interpret it as HTML.
+            messageLabel.textContent = `${style.prefix} ${String(message ?? '')}`;
+
+            div.appendChild(timeLabel);
+            div.appendChild(document.createTextNode(' '));
+            div.appendChild(messageLabel);
             logContainer.appendChild(div);
             logContainer.scrollTop = logContainer.scrollHeight;
         }
@@ -201,10 +228,16 @@
                     cardVib.classList.remove('glow-red');
                 }
 
-                // AI Insight Handling
+                // AI Insight Handling: make unavailable/error states visible, too.
                 if (data.insight && data.insight !== lastInsight) {
                     lastInsight = data.insight;
-                    addLog(data.insight, 'alert');
+                    const status = data.insight_status || 'ok';
+                    const logType = status === 'error'
+                        ? 'error'
+                        : status === 'unavailable'
+                            ? 'warning'
+                            : 'alert';
+                    addLog(data.insight, logType);
                 }
 
             } catch (e) {

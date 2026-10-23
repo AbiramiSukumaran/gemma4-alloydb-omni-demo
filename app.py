@@ -3,6 +3,8 @@ import json
 import psycopg2
 from flask import Flask, render_template, jsonify, request
 
+from ai_response import extract_ai_insight
+
 app = Flask(__name__)
 
 # Global state to track our machine simulation
@@ -59,17 +61,18 @@ def stream():
     current_vib = max(0, current_vib)
     
     insight = None
-    
+    insight_status = "idle"
+
     # 2. Threshold Detection -> Trigger AlloyDB AI!
     if current_pressure < 255 or current_vib > 4.5:
         conn = get_db_connection()
         if conn:
             try:
                 cur = conn.cursor()
-                # We dynamically inject the live sensor readings into the prompt
+                # We dynamically inject the live sensor readings into the prompt.
                 prompt = f"Analyze this sensor data from a 1500T forging press: Pressure={current_pressure:.1f} bar, Vibration={current_vib:.1f} mm/s. Normal pressure is ~280 bar and normal vibration is ~2.0 mm/s. Does this indicate a hydraulic failure? Answer in one short sentence."
-                
-                # Execute the exact SQL that utilizes our internal ML-Agent
+
+                # Execute the SQL that utilizes our internal ML-Agent.
                 query = """
                 SELECT google_ml.predict_row(
                     model_id => 'gemma4:e2b',
@@ -82,31 +85,34 @@ def stream():
                 """
                 cur.execute(query, (prompt,))
                 res = cur.fetchone()
-                
-                # Parse the response from Ollama (returned through AlloyDB)
-                if res and res[0]:
-                    try:
-                        # The prediction returns a JSON blob, we extract the "response" text
-                        parsed = res[0]
-                        if isinstance(parsed, str):
-                            parsed = json.loads(parsed)
-                        insight = parsed.get('response', str(parsed))
-                    except:
-                        insight = str(res[0])
-            except Exception as e:
-                insight = f"Database AI Error: {e}"
+                raw_prediction = res[0] if res else None
+                insight = extract_ai_insight(raw_prediction)
+
+                if insight:
+                    insight_status = "ok"
+                else:
+                    # A successful SQL round trip is not proof that Gemma returned text.
+                    insight = "Gemma returned an empty response. Sensor telemetry is still running."
+                    insight_status = "unavailable"
+            except Exception:
+                # Keep detailed exceptions in server logs, not in the browser UI.
+                app.logger.exception("Failed to obtain a Gemma insight from AlloyDB Omni")
+                insight = "AI analysis failed. Sensor telemetry is still running; check the server logs."
+                insight_status = "error"
             finally:
                 conn.close()
         else:
-            insight = "CRITICAL ANOMALY: (AlloyDB offline, cannot fetch Gemma insight)"
+            insight = "AlloyDB is unavailable. Sensor telemetry is still running without AI analysis."
+            insight_status = "unavailable"
 
-    # 3. Return the payload to the UI
+    # 3. Return telemetry independently of whether AI analysis succeeded.
     return jsonify({
         "pressure": current_pressure,
         "temperature": current_temp,
         "vibration": current_vib,
         "state": machine_state,
-        "insight": insight
+        "insight": insight,
+        "insight_status": insight_status
     })
 
 if __name__ == '__main__':
