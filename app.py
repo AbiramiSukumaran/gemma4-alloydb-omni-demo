@@ -1,3 +1,4 @@
+import os
 import random
 import json
 import psycopg2
@@ -15,11 +16,11 @@ def get_db_connection():
     """Connects to our local, air-gapped AlloyDB Omni instance."""
     try:
         return psycopg2.connect(
-            dbname="postgres",
-            user="postgres",
-            password="omni", # The password you set in the docker run command
-            host="127.0.0.1",
-            port="5432"
+            dbname=os.environ.get("DB_NAME", "postgres"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", "omni"), # The password you set in the docker run command
+            host=os.environ.get("DB_HOST", "127.0.0.1"),
+            port=os.environ.get("DB_PORT", "5432")
         )
     except Exception as e:
         print(f"DB Connection Error: {e}")
@@ -34,8 +35,13 @@ def index():
 def control():
     """Endpoint for the UI to trigger anomalies."""
     global machine_state
-    data = request.json
-    machine_state = data.get('mode', 'normal')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Expected a JSON object"}), 400
+    mode = data.get('mode', 'normal')
+    if mode not in ('normal', 'anomaly'):
+        return jsonify({"status": "error", "message": "Invalid mode"}), 400
+    machine_state = mode
     return jsonify({"status": "success", "mode": machine_state})
 
 @app.route('/api/stream')
@@ -110,5 +116,6 @@ def stream():
     })
 
 if __name__ == '__main__':
-    print("🛡️ Starting Air-Gapped AI Dashboard on http://0.0.0.0:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    print("🛡️ Starting Air-Gapped AI Dashboard on port 5000")
+    app.run(host=os.environ.get("FLASK_HOST", "127.0.0.1"), port=5000,
+            debug=os.environ.get("FLASK_DEBUG", "false").lower() == "true")
